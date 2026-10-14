@@ -79,7 +79,7 @@ npx vercel --prod
 
 1. コードをGitHubの `main` ブランチにpushします。
 2. リポジトリの **Settings → Pages → Source** を **GitHub Actions** に設定します。
-3. Actionsの **Deploy to GitHub Pages** を実行します。以降は `main` へのpushで再デプロイします。
+3. Actionsの **Deploy to GitHub Pages → Run workflow** を実行します。更新時もこの操作で再デプロイします。Vercelを利用する場合にGitHub Pagesへ同時公開されないよう、Pagesの公開は手動実行にしています。
 
 Viteの `base: './'` により、リポジトリ名を含むサブパスでも動作します。画面切り替えにサーバーのルーティングは必要ありません。GitHub PagesのHTTPSでコピー機能を使用できます。
 
