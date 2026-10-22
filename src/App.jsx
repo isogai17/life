@@ -22,6 +22,7 @@ import {
   Sprout,
   Sun,
   Trash2,
+  TrendingUp,
   Upload,
   X,
 } from "lucide-react";
@@ -40,6 +41,11 @@ import {
 import SleepImages, { SleepImageGallery } from "./SleepImages.jsx";
 import { downloadBlob, validImages } from "./images.js";
 import { createBackup, readBackup, restoreBackup } from "./backup.js";
+import WeatherCard from "./WeatherCard.jsx";
+import WellnessForm from "./WellnessForm.jsx";
+import Trends from "./Trends.jsx";
+import EntryHealthDetails from "./EntryHealthDetails.jsx";
+import { validWeather, validWellness } from "./wellness.js";
 
 const conditionLabels = ["つらい", "少し不調", "ふつう", "良い", "とても良い"];
 const moodLabels = ["しょんぼり", "いまひとつ", "ふつう", "ごきげん", "最高"];
@@ -153,13 +159,29 @@ function initialState() {
         (typeof data.sleep === "number" || typeof data.sleep === "string") &&
         [null, 1, 2, 3, 4, 5].includes(data.condition) &&
         [null, 1, 2, 3, 4, 5].includes(data.mood) &&
-        validImages(data.sleepImages)
+        validImages(data.sleepImages) &&
+        validWeather(data.weather, data.date) &&
+        validWellness(data.wellness)
       )
         draft = data;
     }
   } catch {
     warning ||=
       "このブラウザでは下書きを復元できません。コピー機能は引き続き使えます。";
+  }
+  // Start a fresh day only when the older draft is already saved in full.
+  // An unsaved or incomplete draft always remains available for recovery.
+  if (
+    draft.date < localDate() &&
+    !Object.keys(validateEntry(draft)).length &&
+    entries.some(
+      (saved) =>
+        saved.date === draft.date &&
+        JSON.stringify(normalizeEntry(saved)) ===
+          JSON.stringify(normalizeEntry(draft)),
+    )
+  ) {
+    draft = emptyEntry();
   }
   return { entries, draft, warning };
 }
@@ -233,12 +255,32 @@ export default function App() {
   }
   function update(field, value) {
     setDraftStatus("");
-    setEntry((prev) => ({ ...prev, [field]: value }));
+    setEntry((prev) => {
+      if (field === "weather" && value && value.date !== prev.date) return prev;
+      return {
+        ...prev,
+        [field]: value,
+        ...(field === "date" && prev.weather?.date !== value
+          ? { weather: undefined }
+          : {}),
+      };
+    });
     setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
   function openManual(text) {
     manualReturnFocus.current = document.activeElement;
     setManualCopy(text);
+  }
+  function newToday() {
+    if (
+      !window.confirm(
+        "入力中の下書きを、今日の空の日記に切り替えますか？保存済みの日記は履歴に残ります。",
+      )
+    )
+      return;
+    setEntry(emptyEntry());
+    setDraftStatus("");
+    setErrors({});
   }
   function closeManual() {
     setManualCopy("");
@@ -450,6 +492,14 @@ export default function App() {
             <CalendarDays size={19} />
             日記の履歴<span className="nav-count">{entries.length}</span>
           </button>
+          <button
+            disabled={imageBusy || backupBusy}
+            className={tab === "trends" ? "active" : ""}
+            onClick={() => setTab("trends")}
+          >
+            <TrendingUp size={19} />
+            体調の振り返り
+          </button>
         </nav>
         <div className="sidebar-note">
           <div className="plant-drawing">
@@ -473,7 +523,13 @@ export default function App() {
         <header className="topbar">
           <span className="breadcrumb">
             マイダイアリー <ChevronRight size={13} />{" "}
-            <strong>{tab === "write" ? "今日の記録" : "日記の履歴"}</strong>
+            <strong>
+              {tab === "write"
+                ? "今日の記録"
+                : tab === "history"
+                  ? "日記の履歴"
+                  : "体調の振り返り"}
+            </strong>
           </span>
           <span className="topbar-note">
             <span />
@@ -491,16 +547,22 @@ export default function App() {
                   <>
                     今日を、少しだけ振り返る<span>。</span>
                   </>
-                ) : (
+                ) : tab === "history" ? (
                   <>
                     積み重ねた、わたしの毎日<span>。</span>
+                  </>
+                ) : (
+                  <>
+                    からだの声を、少しずつ知る<span>。</span>
                   </>
                 )}
               </h1>
               <p>
                 {tab === "write"
                   ? "感じたこと、気づいたこと。ありのままのあなたを残そう。"
-                  : "小さな記録から、あなたらしいパターンを見つけよう。"}
+                  : tab === "history"
+                    ? "小さな記録から、あなたらしいパターンを見つけよう。"
+                    : "天気や暮らしと体調のつながりを、記録から振り返ろう。"}
               </p>
             </div>
             <div className="heading-flower" aria-hidden="true">
@@ -540,6 +602,16 @@ export default function App() {
                     </div>
                   </div>
                   <span className="date-weekday">{dateLabel}</span>
+                  {entry.date !== localDate() && (
+                    <button
+                      type="button"
+                      className="new-entry-button"
+                      disabled={imageBusy}
+                      onClick={newToday}
+                    >
+                      今日を新しく記録
+                    </button>
+                  )}
                   {errors.date && (
                     <p id="date-error" className="field-error">
                       {errors.date}
@@ -547,6 +619,12 @@ export default function App() {
                   )}
                 </section>
 
+                <WeatherCard
+                  date={entry.date}
+                  value={entry.weather}
+                  onChange={(value) => update("weather", value)}
+                  error={errors.weather}
+                />
                 <section className="card condition-card">
                   <div className="section-heading">
                     <span className="section-icon sage">
@@ -680,6 +758,11 @@ export default function App() {
                   </div>
                 </section>
 
+                <WellnessForm
+                  value={entry.wellness}
+                  onChange={(value) => update("wellness", value)}
+                  error={errors.wellness}
+                />
                 <SleepImages
                   images={entry.sleepImages || []}
                   date={entry.date}
@@ -842,6 +925,12 @@ export default function App() {
                 </div>
               </aside>
             </div>
+          ) : tab === "trends" ? (
+            <Trends
+              entries={entries}
+              onNotify={notify}
+              onManualCopy={openManual}
+            />
           ) : (
             <section className="history-section">
               <div className="history-toolbar">
@@ -948,6 +1037,7 @@ export default function App() {
                       )}
                       {expanded === saved.date && (
                         <div className="history-detail">
+                          <EntryHealthDetails entry={saved} />
                           <h3>気づき</h3>
                           <p>{saved.insights || "記録なし"}</p>
                           <h3>できたこと</h3>

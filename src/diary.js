@@ -1,4 +1,11 @@
 import { imageFilename, validImages } from "./images.js";
+import {
+  normalizeWeather,
+  normalizeWellness,
+  validWeather,
+  validWellness,
+  wellnessMarkdown,
+} from "./wellness.js";
 
 export const STORE_KEY = "yohaku.entries.v1";
 export const DRAFT_KEY = "yohaku.draft.v1";
@@ -41,6 +48,12 @@ export function validateEntry(entry) {
     if (!Number.isInteger(entry[field]) || entry[field] < 1 || entry[field] > 5)
       errors[field] = "1〜5から選んでください。";
   }
+  if (!validWeather(entry.weather, entry.date))
+    errors.weather =
+      "天気の日付や数値を確認してください。空欄は未記録のままにできます。";
+  if (!validWellness(entry.wellness))
+    errors.wellness =
+      "症状の強さ・予定の所要時間・負担感などの入力を確認してください。";
   return errors;
 }
 
@@ -52,6 +65,8 @@ export function normalizeEntry(entry) {
     mood: entry.mood,
     insights: entry.insights,
     achievements: entry.achievements,
+    ...(entry.weather ? { weather: normalizeWeather(entry.weather) } : {}),
+    ...(entry.wellness ? { wellness: normalizeWellness(entry.wellness) } : {}),
     ...(entry.sleepImages?.length
       ? {
           sleepImages: entry.sleepImages.map(
@@ -86,7 +101,7 @@ export function formatEntry(entry) {
   const images = data.sleepImages?.length
     ? `\n- 睡眠画像: ${data.sleepImages.length}枚（画像ファイルは別途添付）\n${data.sleepImages.map((image) => `  - ${image.fileName}`).join("\n")}\n\n【睡眠画像の確認】\nこの日記と一緒に添付した睡眠画像を一次資料として参照してください。読み取れる数値とグラフの傾向を分け、判読できない箇所は推測しないでください。画像が添付されていなければ、画像の追加を求めてください。`
     : "";
-  return `【日記データ記録】\n- 日付: ${data.date}\n- 睡眠時間: ${data.sleep}時間\n- 体調: ${data.condition}/5\n- 気分: ${data.mood}/5\n- 気づき: ${data.insights}\n- できたこと: ${data.achievements}${images}\n\n${fence}json\n${json}\n${fence}`;
+  return `【日記データ記録】\n- 日付: ${data.date}\n- 睡眠時間: ${data.sleep}時間\n- 体調: ${data.condition}/5\n- 気分: ${data.mood}/5\n- 気づき: ${data.insights}\n- できたこと: ${data.achievements}${wellnessMarkdown(data)}${images}\n\n${fence}json\n${json}\n${fence}`;
 }
 
 export function readEntries(storage = localStorage) {
