@@ -1,3 +1,5 @@
+import { imageFilename, validImages } from "./images.js";
+
 export const STORE_KEY = "yohaku.entries.v1";
 export const DRAFT_KEY = "yohaku.draft.v1";
 
@@ -50,11 +52,30 @@ export function normalizeEntry(entry) {
     mood: entry.mood,
     insights: entry.insights,
     achievements: entry.achievements,
+    ...(entry.sleepImages?.length
+      ? {
+          sleepImages: entry.sleepImages.map(
+            ({ id, name, type, size, width, height }) => ({
+              id,
+              name,
+              type,
+              size,
+              width,
+              height,
+            }),
+          ),
+        }
+      : {}),
   };
 }
 
 export function formatEntry(entry) {
   const data = normalizeEntry(entry);
+  if (data.sleepImages)
+    data.sleepImages = data.sleepImages.map((image) => ({
+      ...image,
+      fileName: imageFilename(data.date, image),
+    }));
   const json = JSON.stringify(data);
   const fence = "`".repeat(
     Math.max(
@@ -62,7 +83,10 @@ export function formatEntry(entry) {
       ...[...json.matchAll(/`+/g)].map((match) => match[0].length + 1),
     ),
   );
-  return `【日記データ記録】\n- 日付: ${data.date}\n- 睡眠時間: ${data.sleep}時間\n- 体調: ${data.condition}/5\n- 気分: ${data.mood}/5\n- 気づき: ${data.insights}\n- できたこと: ${data.achievements}\n\n${fence}json\n${json}\n${fence}`;
+  const images = data.sleepImages?.length
+    ? `\n- 睡眠画像: ${data.sleepImages.length}枚（画像ファイルは別途添付）\n${data.sleepImages.map((image) => `  - ${image.fileName}`).join("\n")}\n\n【睡眠画像の確認】\nこの日記と一緒に添付した睡眠画像を一次資料として参照してください。読み取れる数値とグラフの傾向を分け、判読できない箇所は推測しないでください。画像が添付されていなければ、画像の追加を求めてください。`
+    : "";
+  return `【日記データ記録】\n- 日付: ${data.date}\n- 睡眠時間: ${data.sleep}時間\n- 体調: ${data.condition}/5\n- 気分: ${data.mood}/5\n- 気づき: ${data.insights}\n- できたこと: ${data.achievements}${images}\n\n${fence}json\n${json}\n${fence}`;
 }
 
 export function readEntries(storage = localStorage) {
@@ -76,6 +100,7 @@ export function readEntries(storage = localStorage) {
         !entry ||
         typeof entry.insights !== "string" ||
         typeof entry.achievements !== "string" ||
+        !validImages(entry.sleepImages) ||
         Object.keys(validateEntry(entry)).length,
     )
   )
@@ -86,7 +111,10 @@ export function readEntries(storage = localStorage) {
 }
 
 export function saveEntry(entry, storage = localStorage) {
-  if (Object.keys(validateEntry(entry)).length)
+  if (
+    Object.keys(validateEntry(entry)).length ||
+    !validImages(entry.sleepImages)
+  )
     throw new Error("入力内容を確認してください。");
   const entries = readEntries(storage);
   const next = [

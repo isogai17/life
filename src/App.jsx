@@ -10,6 +10,7 @@ import {
   CircleCheck,
   Copy,
   Flower2,
+  Images,
   Heart,
   Leaf,
   LockKeyhole,
@@ -21,6 +22,7 @@ import {
   Sprout,
   Sun,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -35,6 +37,9 @@ import {
   STORE_KEY,
   validateEntry,
 } from "./diary.js";
+import SleepImages, { SleepImageGallery } from "./SleepImages.jsx";
+import { downloadBlob, validImages } from "./images.js";
+import { createBackup, readBackup, restoreBackup } from "./backup.js";
 
 const conditionLabels = ["つらい", "少し不調", "ふつう", "良い", "とても良い"];
 const moodLabels = ["しょんぼり", "いまひとつ", "ふつう", "ごきげん", "最高"];
@@ -147,7 +152,8 @@ function initialState() {
         typeof data.achievements === "string" &&
         (typeof data.sleep === "number" || typeof data.sleep === "string") &&
         [null, 1, 2, 3, 4, 5].includes(data.condition) &&
-        [null, 1, 2, 3, 4, 5].includes(data.mood)
+        [null, 1, 2, 3, 4, 5].includes(data.mood) &&
+        validImages(data.sleepImages)
       )
         draft = data;
     }
@@ -167,6 +173,8 @@ export default function App() {
   const [errors, setErrors] = useState({});
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [manualCopy, setManualCopy] = useState("");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
@@ -174,6 +182,7 @@ export default function App() {
   const toastTimer = useRef();
   const manualRef = useRef();
   const manualReturnFocus = useRef();
+  const restoreInput = useRef();
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -249,7 +258,11 @@ export default function App() {
     try {
       setEntries(saveEntry(entry));
       setWarning("");
-      notify("日記を保存しました！");
+      notify(
+        entry.sleepImages?.length
+          ? "画像付きの日記を保存しました！"
+          : "日記を保存しました！",
+      );
     } catch {
       setWarning(
         "日記を保存できません。保存容量・ブラウザ設定・保存データを確認してください。コピーして記録を残すことはできます。",
@@ -258,6 +271,7 @@ export default function App() {
   }
   async function handleSubmit(event) {
     event.preventDefault();
+    if (imageBusy) return;
     if (!check()) return;
     if (event.nativeEvent.submitter?.value === "save") {
       persist();
@@ -266,7 +280,11 @@ export default function App() {
     setBusy(true);
     try {
       await copyText(formatEntry(entry));
-      notify("コピーしました！");
+      notify(
+        entry.sleepImages?.length
+          ? "コピーしました！画像は別途添付してください。"
+          : "コピーしました！",
+      );
     } catch {
       openManual(formatEntry(entry));
     } finally {
@@ -276,7 +294,11 @@ export default function App() {
   async function copySaved(saved) {
     try {
       await copyText(formatEntry(saved));
-      notify("コピーしました！");
+      notify(
+        saved.sleepImages?.length
+          ? "コピーしました！画像は別途添付してください。"
+          : "コピーしました！",
+      );
     } catch {
       openManual(formatEntry(saved));
     }
@@ -287,7 +309,8 @@ export default function App() {
       entry.condition ||
       entry.mood ||
       entry.insights ||
-      entry.achievements;
+      entry.achievements ||
+      entry.sleepImages?.length;
     if (
       hasDraft &&
       JSON.stringify(normalizeEntry(entry)) !== JSON.stringify(saved) &&
@@ -330,6 +353,50 @@ export default function App() {
     }
   }
 
+  async function backupWithImages() {
+    setBackupBusy(true);
+    try {
+      downloadBlob(
+        await createBackup(readEntries()),
+        `yohaku-backup-${localDate()}.zip`,
+      );
+      notify("画像付きバックアップを書き出しました");
+    } catch (error) {
+      setWarning(`バックアップを作成できません。${error.message}`);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function importBackup(event) {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file || backupBusy) return;
+    setBackupBusy(true);
+    try {
+      const backup = await readBackup(file);
+      if (!backup.entries.length)
+        throw new Error("バックアップに日記がありません。");
+      const existing = readEntries();
+      const conflicts = backup.entries.filter((item) =>
+        existing.some((current) => current.date === item.date),
+      ).length;
+      if (
+        !window.confirm(
+          `${backup.entries.length}日分の日記と睡眠画像を復元します。${conflicts ? `同じ日付の${conflicts}日分はバックアップの内容に置き換わります。` : "現在の日記はそのまま残ります。"}入力中の下書きは変更しません。復元しますか？`,
+        )
+      )
+        return;
+      setEntries(await restoreBackup(backup));
+      setWarning("");
+      notify("日記と睡眠画像を復元しました！");
+    } catch (error) {
+      setWarning(`復元できません。${error.message}`);
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   const dateObject = new Date(`${entry.date}T12:00:00`);
   const dateLabel = Number.isFinite(dateObject.getTime())
     ? new Intl.DateTimeFormat("ja-JP", {
@@ -367,6 +434,7 @@ export default function App() {
         <div className="sidebar-tagline">わたしを知る、小さな日記。</div>
         <nav className="navigation" aria-label="メインメニュー">
           <button
+            disabled={imageBusy || backupBusy}
             className={tab === "write" ? "active" : ""}
             onClick={() => setTab("write")}
           >
@@ -375,6 +443,7 @@ export default function App() {
             <span className="nav-dot" />
           </button>
           <button
+            disabled={imageBusy || backupBusy}
             className={tab === "history" ? "active" : ""}
             onClick={() => setTab("history")}
           >
@@ -611,6 +680,14 @@ export default function App() {
                   </div>
                 </section>
 
+                <SleepImages
+                  images={entry.sleepImages || []}
+                  date={entry.date}
+                  onChange={(images) => update("sleepImages", images)}
+                  busy={imageBusy}
+                  onBusyChange={setImageBusy}
+                />
+
                 <section className="card reflection-card">
                   <div className="section-heading">
                     <span className="section-icon peach">
@@ -670,6 +747,7 @@ export default function App() {
                       className="button secondary"
                       type="submit"
                       value="save"
+                      disabled={imageBusy}
                     >
                       <BookOpen size={17} />
                       日記を保存
@@ -678,7 +756,7 @@ export default function App() {
                       className="button primary"
                       type="submit"
                       value="copy"
-                      disabled={busy}
+                      disabled={busy || imageBusy}
                     >
                       <Copy size={18} />
                       {busy ? "コピー中…" : "ChatGPT用にコピー"}
@@ -730,7 +808,12 @@ export default function App() {
                     <h2>コピー内容のプレビュー</h2>
                     <span>LIVE</span>
                   </div>
-                  <pre>{preview}</pre>
+                  <pre>
+                    {preview}
+                    {entry.sleepImages?.length
+                      ? `\n- 睡眠画像: ${entry.sleepImages.length}枚（別途添付）`
+                      : ""}
+                  </pre>
                   <div className="preview-foot">
                     <span className="code-symbol">{"{ }"}</span>Markdown ＋
                     JSON形式でコピー
@@ -780,6 +863,38 @@ export default function App() {
                   JSONを書き出す
                 </button>
               </div>
+              <div className="history-backup-tools">
+                <button
+                  className="button secondary"
+                  disabled={!entries.length || backupBusy}
+                  onClick={backupWithImages}
+                >
+                  <Images size={17} />
+                  {backupBusy ? "処理中…" : "画像付きバックアップ"}
+                </button>
+                <input
+                  ref={restoreInput}
+                  type="file"
+                  accept=".zip,application/zip"
+                  className="visually-hidden"
+                  aria-label="バックアップZIPを選択"
+                  disabled={backupBusy}
+                  onChange={importBackup}
+                />
+                <button
+                  className="button secondary"
+                  disabled={backupBusy}
+                  onClick={() => restoreInput.current?.click()}
+                >
+                  <Upload size={17} />
+                  バックアップを復元
+                </button>
+              </div>
+              {entries.some((item) => item.sleepImages?.length) && (
+                <p className="backup-help">
+                  JSONには画像の情報のみを含みます。画像の原本も残すには「画像付きバックアップ」をお使いください。
+                </p>
+              )}
               <div className="history-count">
                 {entries.length} 日分の記録{" "}
                 <span>同じ日付の記録は更新されます</span>
@@ -825,12 +940,30 @@ export default function App() {
                           saved.achievements ||
                           "こころと、からだを記録した日。"}
                       </p>
+                      {!!saved.sleepImages?.length && (
+                        <span className="history-image-badge">
+                          <Images size={13} />
+                          睡眠画像 {saved.sleepImages.length}枚
+                        </span>
+                      )}
                       {expanded === saved.date && (
                         <div className="history-detail">
                           <h3>気づき</h3>
                           <p>{saved.insights || "記録なし"}</p>
                           <h3>できたこと</h3>
                           <p>{saved.achievements || "記録なし"}</p>
+                          {!!saved.sleepImages?.length && (
+                            <div className="history-sleep-images">
+                              <h3>睡眠画像の原本</h3>
+                              <SleepImageGallery
+                                images={saved.sleepImages}
+                                date={saved.date}
+                              />
+                              <p>
+                                ChatGPTには、コピーした日記と画像を一緒に添付してください。
+                              </p>
+                            </div>
+                          )}
                           <div className="history-actions">
                             <button
                               className="button secondary"
@@ -886,7 +1019,7 @@ export default function App() {
               )}
               <p className="storage-note">
                 <LockKeyhole size={14} />
-                記録はこのブラウザ内に保存されます。端末間の同期はありません。大切な日記はJSONで書き出して保管してください。
+                記録と睡眠画像はこのブラウザ内に保存されます。端末間の同期はありません。大切な記録は「画像付きバックアップ」で書き出して保管してください。
               </p>
             </section>
           )}
